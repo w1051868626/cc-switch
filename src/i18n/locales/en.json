@@ -5249,6 +5249,7 @@
       "noModels": "Add at least one model",
       "modelKey": "Model key",
       "modelKeyPlaceholder": "deepseek-flash",
+      "modelKeyDuplicate": "This model key already exists",
       "modelId": "Model ID",
       "contextWindow": "Context window",
       "contextWindowPlaceholder": "Optional",

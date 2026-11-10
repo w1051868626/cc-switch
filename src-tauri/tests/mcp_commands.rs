@@ -1892,6 +1892,8 @@ fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
             "dsh",
             "agy",
             "omp",
+            // AtomCode 是受管应用，但其 MCP 同步尚未接线，投影时按 no-op 跳过
+            "atomcode",
             "copilot"
         ]
     );

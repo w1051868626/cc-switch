@@ -57,6 +57,10 @@ const configSchema = z
 const KEY_PATTERN = /^[a-zA-Z0-9._-]+$/;
 const normalizeKey = (value: string) => value.replace(/[^a-zA-Z0-9._-]/g, "");
 
+// 表单里模型行的稳定 id：改键时行不重建、输入框焦点不丢（同 ClaudeStackModelsField）
+let nextModelRowId = 0;
+const createModelRowId = () => `atomcode-model-${(nextModelRowId += 1)}`;
+
 export function AtomCodeProviderForm({
   providerId,
   initialData,
@@ -91,6 +95,23 @@ export function AtomCodeProviderForm({
   const [presetId, setPresetId] = useState("custom");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // 模型键 → 稳定行 id：改键时行不重建，输入框焦点不丢
+  const [rowIds, setRowIds] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      Object.keys(config.models).map((key) => [key, createModelRowId()]),
+    ),
+  );
+  const [keyConflict, setKeyConflict] = useState(false);
+  const syncRowIds = (models: AtomCodeConfig["models"]) =>
+    setRowIds((prev) => {
+      const next: Record<string, string> = {};
+      let changed = Object.keys(prev).length !== Object.keys(models).length;
+      for (const key of Object.keys(models)) {
+        next[key] = prev[key] ?? createModelRowId();
+        if (!prev[key]) changed = true;
+      }
+      return changed ? next : prev;
+    });
   // 账号键即 config.toml 的 provider_accounts.<id>，供应商存在后固定
   const [providerKey, setProviderKey] = useState(providerId ?? "");
   const { data: existing } = useProvidersQuery("atomcode");
@@ -136,6 +157,7 @@ export function AtomCodeProviderForm({
 
   const update = (next: AtomCodeConfig, text?: string) => {
     setConfig(next);
+    syncRowIds(next.models);
     setJsonText(text ?? JSON.stringify(next, null, 2));
     setJsonValid(true);
   };
@@ -183,6 +205,28 @@ export function AtomCodeProviderForm({
     oldKey: string,
     next: { key?: string; model?: string; contextWindow?: string },
   ) => {
+    const renamedKey =
+      next.key !== undefined && next.key !== oldKey ? next.key : undefined;
+    if (
+      renamedKey !== undefined &&
+      Object.prototype.hasOwnProperty.call(config.models, renamedKey)
+    ) {
+      // 改键重名：提示且不覆盖既有键
+      setKeyConflict(true);
+      return;
+    }
+    setKeyConflict(false);
+    if (renamedKey !== undefined) {
+      // 改键时行 id 跟着键走，行不重建
+      setRowIds((prev) => {
+        const moved = prev[oldKey];
+        if (!moved) return prev;
+        const nextIds = { ...prev };
+        delete nextIds[oldKey];
+        nextIds[renamedKey] = moved;
+        return nextIds;
+      });
+    }
     const models: AtomCodeConfig["models"] = {};
     for (const [key, model] of Object.entries(config.models)) {
       if (key !== oldKey) {
@@ -190,9 +234,9 @@ export function AtomCodeProviderForm({
         continue;
       }
       const entry: AtomCodeConfig["models"][string] = { ...model };
-      if (next.key !== undefined && next.key !== oldKey) {
+      if (renamedKey !== undefined) {
         // 改键：按新键重排（保持行序，交给后面统一插入）
-        models[next.key] = entry;
+        models[renamedKey] = entry;
         continue;
       }
       if (next.model !== undefined) entry.model = next.model;
@@ -375,9 +419,17 @@ export function AtomCodeProviderForm({
             {!hasModels && (
               <p className="text-xs text-fg-2">{t("atomcode.form.noModels")}</p>
             )}
+            {keyConflict && (
+              <p className="text-xs text-destructive">
+                {t("atomcode.form.modelKeyDuplicate")}
+              </p>
+            )}
             <div className="space-y-2">
               {Object.entries(config.models ?? {}).map(([key, model]) => (
-                <div key={key} className="flex items-start gap-2">
+                <div
+                  key={rowIds[key] ?? key}
+                  className="flex items-start gap-2"
+                >
                   <div className="w-44 shrink-0">
                     <ImeSafeInput
                       aria-label={t("atomcode.form.modelKey")}
@@ -441,6 +493,7 @@ export function AtomCodeProviderForm({
                 try {
                   const next = configSchema.parse(JSON.parse(text));
                   setConfig(next as unknown as AtomCodeConfig);
+                  syncRowIds((next as unknown as AtomCodeConfig).models ?? {});
                   setJsonValid(true);
                 } catch {
                   setJsonValid(false);

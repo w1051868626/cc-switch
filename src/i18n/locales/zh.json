@@ -5249,6 +5249,7 @@
       "noModels": "请至少添加一个模型",
       "modelKey": "模型键",
       "modelKeyPlaceholder": "deepseek-flash",
+      "modelKeyDuplicate": "该模型键已存在",
       "modelId": "模型 ID",
       "contextWindow": "上下文窗口",
       "contextWindowPlaceholder": "可选",

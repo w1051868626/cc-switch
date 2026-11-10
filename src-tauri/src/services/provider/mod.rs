@@ -244,6 +244,34 @@ mod tests {
                 original_xdg_config_home,
             }
         }
+
+        /// 把某个指向真实用户目录的环境变量改指临时目录，Drop 时恢复。
+        /// 用于 TempHome 覆盖不到的变量（如 ATOMCODE_HOME）。
+        fn override_env(key: &'static str) -> TempEnvOverride {
+            let previous = env::var(key).ok();
+            let dir = TempDir::new().expect("temp dir for env override");
+            env::set_var(key, dir.path());
+            TempEnvOverride {
+                key,
+                previous,
+                _dir: dir,
+            }
+        }
+    }
+
+    struct TempEnvOverride {
+        key: &'static str,
+        previous: Option<String>,
+        _dir: TempDir,
+    }
+
+    impl Drop for TempEnvOverride {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => env::set_var(self.key, value),
+                None => env::remove_var(self.key),
+            }
+        }
     }
 
     impl Drop for TempHome {
@@ -1258,6 +1286,162 @@ mod tests {
             live["env"]["ANTHROPIC_BASE_URL"].as_str(),
             Some("https://api.new.example")
         );
+    }
+
+    /// AtomCode 编辑供应商必须先写 config.toml、成功后才写库：live 写失败时
+    /// 库不能先变（否则下次启动的回填会用旧 live 配置覆盖新库）。
+    #[tokio::test]
+    #[serial]
+    async fn atomcode_update_writes_live_before_db_and_keeps_db_on_live_failure() {
+        let _home = TempHome::new();
+        // TempHome 不覆盖 ATOMCODE_HOME，而 atomcode data_dir 优先读它：
+        // 不隔离的话测试会读写真实的 ~/.atomcode/config.toml。
+        let _atomcode_home = TempHome::override_env("ATOMCODE_HOME");
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        let original = Provider::with_id(
+            "relay".into(),
+            "Relay".into(),
+            json!({
+                "account": {
+                    "provider": "openai",
+                    "base_url": "https://api.old.example/v1",
+                    "api_key": "sk-old"
+                },
+                "models": { "m1": { "model": "m1" } }
+            }),
+            None,
+        );
+        db.save_provider("atomcode", &original)
+            .expect("save provider");
+        crate::atomcode_config::set_provider("relay", original.settings_config.clone())
+            .expect("seed live");
+
+        // 在写 config.toml 一步注入故障（failpoint 挂在 atomcode 写闭包内，
+        // 不会提前触发 live 存在性检查）
+        crate::mode::operation::failpoint::crash_at(Some("atomcode:write"));
+
+        let mut updated = original.clone();
+        updated.settings_config["account"]["api_key"] = json!("sk-new");
+        let result = ProviderService::update(&state, AppType::AtomCode, None, updated);
+
+        assert!(result.is_err(), "update must fail when live write fails");
+        let stored = db
+            .get_provider_by_id("relay", "atomcode")
+            .expect("read db")
+            .expect("provider still exists");
+        assert_eq!(
+            stored.settings_config["account"]["api_key"],
+            json!("sk-old"),
+            "db must keep the old config when the live write fails"
+        );
+        crate::mode::operation::failpoint::crash_at(None);
+    }
+
+    /// 直接驱动 AtomCode 的 native 写入路径，隔离 create / write_live / live 故障三种
+    /// 参数组合；返回 (写入结果, live 的 api_key, db 的 api_key) 供各用例断言写序。
+    /// create=true 时 live 里还没有该账号节点，符合 apply_provider 的语义。
+    fn atomcode_save_case(
+        create: bool,
+        write_live: bool,
+        inject_live_failure: bool,
+    ) -> (Result<bool, AppError>, Value, Option<Value>) {
+        let _home = TempHome::new();
+        let _atomcode_home = TempHome::override_env("ATOMCODE_HOME");
+        crate::settings::reload_settings().expect("reload settings");
+        crate::mode::operation::failpoint::crash_at(None);
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        let original = Provider::with_id(
+            "relay".into(),
+            "Relay".into(),
+            json!({
+                "account": {
+                    "provider": "openai",
+                    "base_url": "https://api.old.example/v1",
+                    "api_key": "sk-old"
+                },
+                "models": { "m1": { "model": "m1" } }
+            }),
+            None,
+        );
+        db.save_provider("atomcode", &original)
+            .expect("save provider");
+        if !create {
+            crate::atomcode_config::set_provider("relay", original.settings_config.clone())
+                .expect("seed live");
+        }
+
+        let mut updated = original.clone();
+        updated.settings_config["account"]["api_key"] = json!("sk-new");
+        if inject_live_failure {
+            crate::mode::operation::failpoint::crash_at(Some("atomcode:write"));
+        }
+        let result = ProviderService::save_native_provider(
+            &state,
+            &AppType::AtomCode,
+            &updated,
+            write_live,
+            create,
+        );
+        crate::mode::operation::failpoint::crash_at(None);
+
+        let live = crate::atomcode_config::read(&crate::atomcode_config::config_path())
+            .expect("read live config");
+        let live_key = live["provider_accounts"]["relay"]["api_key"].clone();
+        let db_key = db
+            .get_provider_by_id("relay", "atomcode")
+            .expect("read db")
+            .map(|row| row.settings_config["account"]["api_key"].clone());
+        (result, live_key, db_key)
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn atomcode_update_success_keeps_live_and_db_in_sync() {
+        let (result, live_key, db_key) = atomcode_save_case(false, true, false);
+        assert!(
+            result.is_ok(),
+            "update must succeed without injected failure"
+        );
+        assert_eq!(live_key, json!("sk-new"), "live must hold the new key");
+        assert_eq!(db_key, Some(json!("sk-new")), "db must hold the new key");
+        assert_eq!(
+            db_key.as_ref(),
+            Some(&live_key),
+            "live and db must agree after a successful write"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn atomcode_create_follows_the_same_write_order() {
+        let (result, live_key, db_key) = atomcode_save_case(true, true, false);
+        assert!(
+            result.is_ok(),
+            "create must succeed without injected failure"
+        );
+        assert_eq!(live_key, json!("sk-new"));
+        assert_eq!(db_key.as_ref(), Some(&live_key));
+
+        // live 写失败时，新增的账号既不能进 live，也不能先落库。
+        let (result, live_key, db_key) = atomcode_save_case(true, true, true);
+        assert!(result.is_err(), "create must fail when live write fails");
+        assert_eq!(live_key, Value::Null, "live must not gain the account");
+        assert_eq!(db_key, Some(json!("sk-old")), "db must keep the old row");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn atomcode_db_only_update_leaves_live_untouched() {
+        // write_live=false：副本只进库，不得触碰用户的 config.toml。
+        let (result, live_key, db_key) = atomcode_save_case(false, false, false);
+        assert!(result.is_ok(), "db-only update must succeed");
+        assert_eq!(db_key, Some(json!("sk-new")));
+        assert_eq!(live_key, json!("sk-old"), "live must stay unchanged");
     }
 
     /// 编辑当前供应商、去掉它的独有字段：live 里 CC Switch 写进去的那个值随之删掉，
@@ -5608,6 +5792,24 @@ impl ProviderService {
                 Ok(true)
             };
         }
+        if app_type == &AppType::AtomCode {
+            // AtomCode 同 Kimi：先写 config.toml，成功后才提交库，live 写失败时库不动，
+            // 否则下次启动的回填会用旧 live 配置覆盖刚保存的编辑。
+            return if write_live {
+                crate::atomcode_config::save_and_commit(
+                    &provider.id,
+                    Some(provider.settings_config.clone()),
+                    create,
+                    || {
+                        state.db.save_provider(app_type.as_str(), provider)?;
+                        Ok(true)
+                    },
+                )
+            } else {
+                state.db.save_provider(app_type.as_str(), provider)?;
+                Ok(true)
+            };
+        }
         let previous = state.db.get_provider_by_id(&provider.id, "mcode")?;
         state.db.save_provider("mcode", provider)?;
         if write_live {
@@ -6428,7 +6630,10 @@ impl ProviderService {
             )?;
             Self::set_provider_live_config_managed(&mut provider, live_config_managed);
 
-            if matches!(app_type, AppType::Mcode | AppType::Kimi | AppType::Dsh) {
+            if matches!(
+                app_type,
+                AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::AtomCode
+            ) {
                 return Self::save_native_provider(
                     state,
                     &app_type,

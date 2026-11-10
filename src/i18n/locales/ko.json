@@ -5260,5 +5260,10 @@
       "editDisabled": "DeepSeek Harness가 이 계정으로 사용할 수 있는 모델을 자동으로 제공하므로 편집할 필요가 없습니다.",
       "managedHint": "이 계정은 인증 센터에서 관리합니다. 로그아웃하면 이 카드가 사라집니다."
     }
+  },
+  "atomcode": {
+    "form": {
+      "modelKeyDuplicate": "이 모델 키는 이미 존재합니다"
+    }
   }
 }

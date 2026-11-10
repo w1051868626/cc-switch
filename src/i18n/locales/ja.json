@@ -5249,6 +5249,7 @@
       "noModels": "モデルを 1 つ以上追加してください",
       "modelKey": "モデルキー",
       "modelKeyPlaceholder": "deepseek-flash",
+      "modelKeyDuplicate": "このモデルキーは既に存在します",
       "modelId": "モデル ID",
       "contextWindow": "コンテキストウィンドウ",
       "contextWindowPlaceholder": "省略可",

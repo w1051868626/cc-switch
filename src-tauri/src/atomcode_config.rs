@@ -305,6 +305,7 @@ fn save_at_and_commit<T>(
     crate::mcode_config::write_and_commit(
         path,
         || {
+            crate::mode::operation::failpoint::hit("atomcode:write")?;
             let before = read(path)?;
             let after = apply_provider(&before, id, config, create)?;
             if before == after {

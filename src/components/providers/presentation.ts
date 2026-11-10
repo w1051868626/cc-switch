@@ -723,8 +723,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
   for (const p of providers) {
     const chips: CardChip[] = [];
-    if (app === "kimi") {
-      const official = isOfficialAccount(app, p);
+    // Kimi / AtomCode：账号共存于 live 配置，「当前默认」来自库里的 current 指针
+    if (app === "kimi" || app === "atomcode") {
+      const official = app === "kimi" && isOfficialAccount(app, p);
       const live = input.isInConfig(p);
       // 官方卡可以编辑模型、可以移出 config.toml（登录留着，能再添加）；仍在 Kimi 里的
       // 官方卡不能直接删，删号在授权中心（连登录一起删）

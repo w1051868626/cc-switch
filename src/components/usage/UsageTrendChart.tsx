@@ -221,12 +221,19 @@ function cjkThousandUnits(locale: string): Array<[number, string]> | null {
 export function createUsageTrendTokenTickFormatter(
   locale: string,
 ): UsageTrendTokenTickFormatter {
-  const compact = new Intl.NumberFormat(locale, {
+  const compactOptions: Intl.NumberFormatOptions = {
     notation: "compact",
     compactDisplay: "short",
     maximumFractionDigits: 1,
-  });
+  };
   const units = cjkThousandUnits(locale);
+  let compact = new Intl.NumberFormat(locale, compactOptions);
+  // ICU 遇到不认识的 locale（如 "zhb"）会静默回退到系统默认语言；中文环境下
+  // 这会让非 CJK 语言意外带上「万/亿」。检测回退后改用英文 compact 单位，
+  // 其余语言仍保留各自单位（ko-KR 的 만、ru-RU 的 млн 等）。
+  if (!units && /^(zh|ja)\b/i.test(compact.resolvedOptions().locale)) {
+    compact = new Intl.NumberFormat("en-US", compactOptions);
+  }
   if (!units) return compact;
   const plain = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
   return {

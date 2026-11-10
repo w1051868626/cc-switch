@@ -448,10 +448,10 @@ function App() {
     }
   };
 
-  // Kimi「添加」只写进 config.toml、不改默认模型；「切换」走 switchProvider
-  const handleAddKimiProvider = async (provider: Provider) => {
+  // Kimi / AtomCode「添加」只写进 config.toml、不改默认模型；「切换」走 switchProvider
+  const handleAddToLiveConfig = async (provider: Provider, app: AppId) => {
     try {
-      await providersApi.addToLiveConfig(provider.id, "kimi");
+      await providersApi.addToLiveConfig(provider.id, app);
     } catch (error) {
       toast.error(
         t("notifications.addFailed", {
@@ -461,7 +461,7 @@ function App() {
       );
       return;
     } finally {
-      await queryClient.invalidateQueries({ queryKey: ["providers", "kimi"] });
+      await queryClient.invalidateQueries({ queryKey: ["providers", app] });
     }
     toast.success(
       t("notifications.addToConfigSuccess", { defaultValue: "已添加到配置" }),
@@ -1123,7 +1123,12 @@ function App() {
         queryClient.invalidateQueries({ queryKey: hermesKeys.liveProviderIds }),
         queryClient.invalidateQueries({ queryKey: hermesKeys.modelConfig }),
       ]);
-    } else if (app === "mcode" || app === "dsh" || app === "kimi") {
+    } else if (
+      app === "mcode" ||
+      app === "dsh" ||
+      app === "kimi" ||
+      app === "atomcode"
+    ) {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
     }
   };
@@ -1295,7 +1300,8 @@ function App() {
     } else if (
       activeApp === "mcode" ||
       activeApp === "dsh" ||
-      activeApp === "kimi"
+      activeApp === "kimi" ||
+      activeApp === "atomcode"
     ) {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.
@@ -1314,6 +1320,9 @@ function App() {
             },
           ]),
         );
+      }
+      if (activeApp === "kimi" || activeApp === "atomcode") {
+        // 共存式应用的副本只进库，不自动写进 live 配置
         duplicatedProvider.addToLive = false;
       }
     }
@@ -1665,8 +1674,8 @@ function App() {
             onSwitch={(provider) =>
               void (isPiFamilyApp(activeApp)
                 ? handleEnablePiProvider(provider, activeApp)
-                : activeApp === "kimi"
-                  ? handleAddKimiProvider(provider)
+                : activeApp === "kimi" || activeApp === "atomcode"
+                  ? handleAddToLiveConfig(provider, activeApp)
                   : switchProvider(provider))
             }
             onRemoveFromConfig={
@@ -1677,7 +1686,8 @@ function App() {
               activeApp === "mcode" ||
               activeApp === "kimi" ||
               activeApp === "dsh" ||
-              activeApp === "omp"
+              activeApp === "omp" ||
+              activeApp === "atomcode"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }
@@ -1691,7 +1701,9 @@ function App() {
               activeApp === "openclaw" || activeApp === "opencode"
                 ? (provider, modelId) =>
                     void setAsDefaultModel(provider, modelId)
-                : activeApp === "hermes" || activeApp === "kimi"
+                : activeApp === "hermes" ||
+                    activeApp === "kimi" ||
+                    activeApp === "atomcode"
                   ? (provider) => void switchProvider(provider)
                   : undefined
             }

@@ -375,7 +375,7 @@ describe("ProviderList Component", () => {
     expect(onSwitch).toHaveBeenCalledWith(providerA);
   });
 
-  it.each(["mcode"] as const)(
+  it.each(["mcode", "atomcode"] as const)(
     "uses native membership to add and remove %s providers",
     async (appId) => {
       const saved = createProvider({
@@ -465,6 +465,79 @@ describe("ProviderList Component", () => {
         (button: { key: string }) => button.key === "remove",
       )?.disabledReason,
     ).toBeTruthy();
+    // 已添加的卡在「更多」菜单里「设为默认」；未添加的卡「添加」只写进配置
+    expect(screen.queryByTestId("switch-other")).not.toBeInTheDocument();
+    lastProps("other")
+      ?.presentation.menuItems.find(
+        (action: { key: string }) => action.key === "setDefault",
+      )
+      .onSelect();
+    expect(onSetAsDefault).toHaveBeenLastCalledWith(other, undefined);
+    expect(screen.queryByTestId("switch-saved")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("add-saved"));
+    expect(onSwitch).toHaveBeenLastCalledWith(saved);
+    fireEvent.click(screen.getByTestId("remove-other"));
+    expect(onRemoveFromConfig).toHaveBeenCalledWith(other);
+    rerender(
+      <QueryClientProvider client={client}>
+        <ProviderList {...props} currentProviderId="other" />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByTestId("status-current")).not.toBeInTheDocument();
+    expect(screen.getByTestId("status-other")).toHaveTextContent(
+      "providerCard.status.default",
+    );
+    expect(
+      lastProps("current")?.presentation.menuItems.map(
+        (action: { key: string }) => action.key,
+      ),
+    ).toEqual(["setDefault"]);
+  });
+
+  it("adds, switches and removes AtomCode providers with a set-default menu item", () => {
+    const current = createProvider({
+      id: "current",
+      name: "Current",
+      meta: { liveConfigManaged: true },
+    });
+    const other = createProvider({
+      id: "other",
+      name: "Other",
+      meta: { liveConfigManaged: true },
+    });
+    const saved = createProvider({
+      id: "saved",
+      name: "Saved",
+      meta: { liveConfigManaged: false },
+    });
+    const onSwitch = vi.fn();
+    const onSetAsDefault = vi.fn();
+    const onRemoveFromConfig = vi.fn();
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [current, other, saved],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    const props = {
+      ...baseProps,
+      appId: "atomcode" as const,
+      providers: { current, other, saved },
+      onSwitch,
+      onSetAsDefault,
+      onRemoveFromConfig,
+    };
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <ProviderList {...props} currentProviderId="current" />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId("status-current")).toHaveTextContent(
+      "providerCard.status.default",
+    );
+    expect(lastProps("current")?.presentation.tone).toBe("direct");
     // 已添加的卡在「更多」菜单里「设为默认」；未添加的卡「添加」只写进配置
     expect(screen.queryByTestId("switch-other")).not.toBeInTheDocument();
     lastProps("other")
