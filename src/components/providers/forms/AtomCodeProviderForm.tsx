@@ -321,7 +321,8 @@ export function AtomCodeProviderForm({
     update({ ...config, models });
   };
 
-  const currentProvider = config.account?.provider ?? "openai-compatible";
+  // 空字符串也回退默认：Radix Select 不允许 SelectItem value=""
+  const currentProvider = config.account?.provider || "openai-compatible";
   // 协议选项 + 当前值（厂商预设 id 不在协议列表里时补一条，label 用 registry 显示名）
   const providerTypeOptions: { value: string; label: string }[] =
     ATOMCODE_PROVIDER_TYPES.some((type) => type.value === currentProvider)
@@ -436,7 +437,7 @@ export function AtomCodeProviderForm({
                 {t("atomcode.form.providerType")}
               </Label>
               <Select
-                value={config.account?.provider ?? "openai-compatible"}
+                value={config.account?.provider || "openai-compatible"}
                 onValueChange={(value) =>
                   updateAccount({ provider: value as AtomCodeProviderType })
                 }
