@@ -5251,6 +5251,7 @@
       "modelKey": "模型鍵",
       "modelKeyPlaceholder": "deepseek-flash",
       "modelKeyDuplicate": "該模型鍵已存在",
+      "modelName": "顯示名稱",
       "modelId": "模型 ID",
       "contextWindow": "上下文視窗",
       "contextWindowPlaceholder": "可選",

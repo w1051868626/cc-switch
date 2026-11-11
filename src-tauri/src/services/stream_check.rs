@@ -212,6 +212,14 @@ impl StreamCheckService {
                         AppError::Message("COPILOT_PROVIDER_BASE_URL is empty".to_string())
                     })
             }
+            AppType::AtomCode => provider
+                .settings_config
+                .pointer("/account/base_url")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|url| !url.is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| AppError::Message("AtomCode base_url 为空".to_string())),
             _ => get_adapter(app_type)
                 .ok_or_else(|| {
                     AppError::InvalidInput(format!(

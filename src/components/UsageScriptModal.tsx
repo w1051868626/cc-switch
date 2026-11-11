@@ -364,6 +364,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: options.apiKey,
             baseUrl: options.baseURL,
           };
+        } else if (appId === "atomcode") {
+          // AtomCode: 凭据在 account 节点（镜像后端 resolve_usage_credentials
+          // 的 /account/base_url + /account/api_key，对应 config.toml 的
+          // provider_accounts.<id>）。
+          const account = (config as any).account || {};
+          return {
+            apiKey: account.api_key,
+            baseUrl: account.base_url,
+          };
         }
         return { apiKey: undefined, baseUrl: undefined };
       } catch (error) {

@@ -204,6 +204,52 @@ pub async fn fetch_models_for_config(
     .await
 }
 
+/// 获取 AtomCode 供应商的可用模型列表
+///
+/// 使用 OpenAI 兼容的 GET /v1/models 端点。根据 AtomCode 账号配置
+/// (provider 类型和 base_url) 获取可用模型。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn fetch_atomcode_models(
+    provider: String,
+    base_url: String,
+    api_key: String,
+) -> Result<Vec<FetchedModel>, String> {
+    // AtomCode 原生预设自带默认端点，base_url 为空时用预设默认值（协议 id 与
+    // 厂商 id 混用；厂商预设由前端带上 base_url，这里只兜底通用协议）。
+    // 早期 cc-switch 写过的 wire 名（claude / gemini …）也照旧支持。
+    let effective_base_url = if base_url.trim().is_empty() {
+        match provider.as_str() {
+            "claude" | "anthropic" | "anthropic-compatible" => "https://api.anthropic.com",
+            "openai" | "openai-responses" => "https://api.openai.com/v1",
+            "deepseek" => "https://api.deepseek.com/v1",
+            "deepseek-messages" => "https://api.deepseek.com/anthropic",
+            "ollama" => "http://localhost:11434",
+            "gemini" => "https://generativelanguage.googleapis.com/v1beta",
+            _ => base_url.as_str(),
+        }
+    } else {
+        base_url.as_str()
+    };
+
+    // 根据 provider 类型调整 API format
+    let api_format = match provider.as_str() {
+        "claude" | "anthropic" | "anthropic-compatible" | "deepseek-messages" => Some("anthropic"),
+        "gemini" => Some("gemini"),
+        _ => None,
+    };
+
+    model_fetch::fetch_models(
+        effective_base_url,
+        &api_key,
+        false,
+        None,
+        None,
+        api_format,
+        None,
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::{parse_opencode_models, OpenCodeModelRef};

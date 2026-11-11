@@ -20,8 +20,10 @@ import { useProvidersQuery } from "@/lib/query/queries";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 import {
   ATOMCODE_PROVIDER_TYPES,
+  ATOMCODE_VENDOR_PROVIDER_LABELS,
   atomCodeCustomTemplate,
   atomcodeProviderPresets,
+  normalizeAtomCodeProvider,
   type AtomCodeProviderPreset,
   type AtomCodeProviderType,
 } from "@/config/atomcodeProviderPresets";
@@ -29,6 +31,12 @@ import { BasicFormFields } from "./BasicFormFields";
 import ApiKeyInput from "./ApiKeyInput";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import type { ProviderFormProps } from "./ProviderForm";
+import { FetchedModelPicker } from "./FetchedModelPicker";
+import {
+  fetchAtomCodeModels,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
 
 type AtomCodeConfig = AtomCodeProviderPreset["settingsConfig"];
 
@@ -81,7 +89,11 @@ export function AtomCodeProviderForm({
     const template = atomCodeCustomTemplate();
     return {
       account: {
-        provider: raw?.account?.provider ?? template.account.provider,
+        // 早期版本写过 wire 名（claude / openai_responses / gemini），AtomCode 只认
+        // 预设 id，加载时归一化，避免编辑旧账号时下拉空白、保存后又写回旧值
+        provider: normalizeAtomCodeProvider(
+          raw?.account?.provider ?? template.account.provider,
+        ) as AtomCodeProviderType,
         base_url: raw?.account?.base_url ?? template.account.base_url,
         api_key: raw?.account?.api_key ?? template.account.api_key,
       },
@@ -102,6 +114,8 @@ export function AtomCodeProviderForm({
     ),
   );
   const [keyConflict, setKeyConflict] = useState(false);
+  const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
   const syncRowIds = (models: AtomCodeConfig["models"]) =>
     setRowIds((prev) => {
       const next: Record<string, string> = {};
@@ -256,6 +270,72 @@ export function AtomCodeProviderForm({
     update({ ...config, models });
   };
 
+  const handleFetchModels = async () => {
+    const provider = config.account?.provider ?? "openai-compatible";
+    const baseUrl = config.account?.base_url ?? "";
+    const apiKey = config.account?.api_key ?? "";
+
+    if (!apiKey.trim()) {
+      showFetchModelsError("API key required", t, {
+        hasApiKey: false,
+        hasBaseUrl: true,
+      });
+      return;
+    }
+
+    setIsFetchingModels(true);
+    try {
+      const models = await fetchAtomCodeModels(provider, baseUrl, apiKey);
+      setFetchedModels(models);
+    } catch (err) {
+      showFetchModelsError(err, t, {
+        hasApiKey: Boolean(apiKey.trim()),
+        hasBaseUrl: true,
+      });
+    } finally {
+      setIsFetchingModels(false);
+    }
+  };
+
+  const handleApplyModels = (selection: {
+    add: string[];
+    remove: string[];
+  }) => {
+    const models = { ...config.models };
+    // 移除取消勾选的模型
+    for (const modelId of selection.remove) {
+      const key = Object.keys(models).find((k) => models[k]?.model === modelId);
+      if (key) delete models[key];
+    }
+    // 添加新勾选的模型
+    for (const modelId of selection.add) {
+      // 生成唯一键
+      let key = modelId.replace(/[^a-zA-Z0-9._-]/g, "-");
+      let index = 1;
+      while (models[key]) {
+        key = `${modelId.replace(/[^a-zA-Z0-9._-]/g, "-")}-${index}`;
+        index += 1;
+      }
+      models[key] = { model: modelId };
+    }
+    update({ ...config, models });
+  };
+
+  const currentProvider = config.account?.provider ?? "openai-compatible";
+  // 协议选项 + 当前值（厂商预设 id 不在协议列表里时补一条，label 用 registry 显示名）
+  const providerTypeOptions: { value: string; label: string }[] =
+    ATOMCODE_PROVIDER_TYPES.some((type) => type.value === currentProvider)
+      ? ATOMCODE_PROVIDER_TYPES
+      : [
+          ...ATOMCODE_PROVIDER_TYPES,
+          {
+            value: currentProvider,
+            label:
+              ATOMCODE_VENDOR_PROVIDER_LABELS[currentProvider] ??
+              currentProvider,
+          },
+        ];
+
   const presetEntries = atomcodeProviderPresets.map((entry, index) => ({
     id: String(index),
     preset: entry,
@@ -356,7 +436,7 @@ export function AtomCodeProviderForm({
                 {t("atomcode.form.providerType")}
               </Label>
               <Select
-                value={config.account?.provider ?? "openai"}
+                value={config.account?.provider ?? "openai-compatible"}
                 onValueChange={(value) =>
                   updateAccount({ provider: value as AtomCodeProviderType })
                 }
@@ -365,7 +445,9 @@ export function AtomCodeProviderForm({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {ATOMCODE_PROVIDER_TYPES.map((type) => (
+                  {/* 厂商预设写的是 AtomCode 厂商 id（openrouter / moonshot …），
+                      不在协议选项里，补一行当前值，编辑时下拉才有显示 */}
+                  {providerTypeOptions.map((type) => (
                     <SelectItem key={type.value} value={type.value}>
                       {type.label}
                     </SelectItem>
@@ -407,15 +489,26 @@ export function AtomCodeProviderForm({
                   *
                 </span>
               </Label>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addModel}
-              >
-                <Plus className="mr-1 h-4 w-4" />
-                {t("atomcode.form.addModel")}
-              </Button>
+              <div className="flex gap-2">
+                <FetchedModelPicker
+                  models={fetchedModels}
+                  configuredModelIds={Object.values(config.models ?? {}).map(
+                    (m) => m.model,
+                  )}
+                  onApply={handleApplyModels}
+                  onFetch={handleFetchModels}
+                  isFetching={isFetchingModels}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addModel}
+                >
+                  <Plus className="mr-1 h-4 w-4" />
+                  {t("atomcode.form.addModel")}
+                </Button>
+              </div>
             </div>
             {!hasModels && (
               <p className="text-xs text-fg-2">{t("atomcode.form.noModels")}</p>
@@ -425,6 +518,20 @@ export function AtomCodeProviderForm({
                 {t("atomcode.form.modelKeyDuplicate")}
               </p>
             )}
+            {hasModels && (
+              <div className="flex items-center gap-2" aria-hidden="true">
+                <div className="w-44 shrink-0 text-xs text-fg-2">
+                  {t("atomcode.form.modelId")}
+                </div>
+                <div className="min-w-0 flex-1 text-xs text-fg-2">
+                  {t("atomcode.form.modelName")}
+                </div>
+                <div className="w-36 shrink-0 text-xs text-fg-2">
+                  {t("atomcode.form.contextWindow")}
+                </div>
+                <div className="size-10 shrink-0" />
+              </div>
+            )}
             <div className="space-y-2">
               {Object.entries(config.models ?? {}).map(([key, model]) => (
                 <div
@@ -433,23 +540,23 @@ export function AtomCodeProviderForm({
                 >
                   <div className="w-44 shrink-0">
                     <ImeSafeInput
-                      aria-label={t("atomcode.form.modelKey")}
-                      value={key}
-                      onValueChange={(next) =>
-                        updateModel(key, { key: normalizeKey(next) })
-                      }
-                      placeholder={t("atomcode.form.modelKeyPlaceholder")}
-                      autoComplete="off"
-                    />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <ImeSafeInput
                       aria-label={t("atomcode.form.modelId")}
                       value={model?.model ?? ""}
                       onValueChange={(next) =>
                         updateModel(key, { model: next })
                       }
                       placeholder="deepseek-flash"
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <ImeSafeInput
+                      aria-label={t("atomcode.form.modelKey")}
+                      value={key}
+                      onValueChange={(next) =>
+                        updateModel(key, { key: normalizeKey(next) })
+                      }
+                      placeholder={t("atomcode.form.modelKeyPlaceholder")}
                       autoComplete="off"
                     />
                   </div>

@@ -5250,6 +5250,7 @@
       "modelKey": "モデルキー",
       "modelKeyPlaceholder": "deepseek-flash",
       "modelKeyDuplicate": "このモデルキーは既に存在します",
+      "modelName": "表示名",
       "modelId": "モデル ID",
       "contextWindow": "コンテキストウィンドウ",
       "contextWindowPlaceholder": "省略可",

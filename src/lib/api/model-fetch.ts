@@ -128,6 +128,24 @@ export async function fetchXaiOauthModels(
 }
 
 /**
+ * 获取 AtomCode 供应商的可用模型列表
+ *
+ * 根据 AtomCode 账号配置 (provider 类型和 base_url) 获取可用模型。
+ * 支持 OpenAI 兼容、Anthropic、Gemini 等协议。
+ */
+export async function fetchAtomCodeModels(
+  provider: string,
+  baseUrl: string,
+  apiKey: string,
+): Promise<FetchedModel[]> {
+  return invoke("fetch_atomcode_models", {
+    provider,
+    baseUrl,
+    apiKey,
+  });
+}
+
+/**
  * 根据错误类型显示对应的 toast 提示
  */
 export function showFetchModelsError(

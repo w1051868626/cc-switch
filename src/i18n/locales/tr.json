@@ -5160,6 +5160,7 @@
       "modelKey": "Model anahtarı",
       "modelKeyPlaceholder": "deepseek-flash",
       "modelKeyDuplicate": "Bu model anahtarı zaten mevcut",
+      "modelName": "Görünen ad",
       "modelId": "Model kimliği",
       "contextWindow": "Bağlam penceresi",
       "contextWindowPlaceholder": "İsteğe bağlı",

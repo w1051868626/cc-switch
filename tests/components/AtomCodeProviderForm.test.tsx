@@ -96,4 +96,61 @@ describe("AtomCodeProviderForm", () => {
     expect(saved.models.m1).toEqual({ model: "m1-model" });
     expect(saved.models.m2).toEqual({ model: "m2-model" });
   });
+
+  it("normalizes a legacy wire name to the AtomCode preset id on save", async () => {
+    setProviders("atomcode", {});
+    const submit = vi.fn();
+    render(
+      <AtomCodeProviderForm
+        appId="atomcode"
+        providerId="existing"
+        initialData={{
+          ...initialData,
+          settingsConfig: {
+            ...initialData.settingsConfig,
+            // 早期 cc-switch 写过 claude；AtomCode 不认，会静默退成 openai-compatible
+            account: {
+              ...initialData.settingsConfig.account,
+              provider: "claude",
+            },
+          },
+        }}
+        submitLabel="Save"
+        onSubmit={submit}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByText("Anthropic Messages")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
+    expect(saved.account.provider).toBe("anthropic");
+  });
+
+  it("shows the vendor preset name when editing a preset-created account", () => {
+    setProviders("atomcode", {});
+    render(
+      <AtomCodeProviderForm
+        appId="atomcode"
+        providerId="existing"
+        initialData={{
+          ...initialData,
+          settingsConfig: {
+            ...initialData.settingsConfig,
+            account: {
+              ...initialData.settingsConfig.account,
+              provider: "openrouter",
+              base_url: "https://openrouter.ai/api/v1",
+            },
+          },
+        }}
+        submitLabel="Save"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    // 厂商预设 id 不在协议下拉里，补一行当前值，否则触发器是空白
+    const trigger = document.getElementById("atomcode-provider-type");
+    expect(trigger?.textContent).toContain("OpenRouter");
+  });
 });

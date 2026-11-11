@@ -95,6 +95,49 @@ pub(crate) fn current_provider() -> Result<String, AppError> {
     Ok(account_id.to_string())
 }
 
+/// `provider_accounts.<id>.provider` 的合法取值 = AtomCode 内置预设 id
+/// （atomcode 仓库 `crates/atomcode-config/src/config/provider_preset.rs` 的
+/// `PRESETS`：5 个通用协议 + 厂商预设）。AtomCode 对未知 id **静默回退**
+/// `openai-compatible`，写错值不会报错、只会换协议跑，所以这里必须白名单拦下。
+const PROVIDER_IDS: &[&str] = &[
+    // 通用协议（AtomCode TUI 的 PROTOCOLS）
+    "openai-compatible",
+    "anthropic-compatible",
+    "openai-responses",
+    "deepseek-messages",
+    "ollama",
+    // 厂商预设
+    "openai",
+    "anthropic",
+    "deepseek",
+    "zhipu",
+    "zhipu-coding",
+    "aliyun",
+    "siliconflow",
+    "moonshot",
+    "minimax",
+    "minimax-token-plan",
+    "xiaomi-mimo",
+    "longcat",
+    "volcengine",
+    "volcengine-coding",
+    "openrouter",
+    "taotoken",
+    "opencode",
+];
+
+/// 早期 cc-switch 写入的 wire 名 → AtomCode 预设 id。`claude` 若不归一化会被
+/// AtomCode 当成未知 id 回退到 openai-compatible，Anthropic 账号直接不可用；
+/// `openai_responses` 同理会退成 chat 协议。
+fn canonical_provider_id(provider: &str) -> &str {
+    match provider {
+        "claude" => "anthropic",
+        "openai_responses" => "openai-responses",
+        "gemini" => "openai-compatible",
+        other => other,
+    }
+}
+
 pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError> {
     if id.trim().is_empty() || id.chars().any(char::is_control) {
         return Err(AppError::InvalidInput(
@@ -110,25 +153,18 @@ pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError
         ));
     }
     let account = &config["account"];
-    if !matches!(
-        account.get("provider").and_then(Value::as_str),
-        Some(
-            "openai"
-                | "openai_responses"
-                | "claude"
-                | "anthropic"
-                | "deepseek"
-                | "gemini"
-                | "ollama"
-        )
-    ) {
+    let provider = account
+        .get("provider")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    // 历史 wire 名（claude / openai_responses / gemini）照样接住，写盘时归一化
+    if !PROVIDER_IDS.contains(&canonical_provider_id(provider)) {
         return Err(AppError::InvalidInput(
-            "Select a supported AtomCode provider type".into(),
+            "Select a supported AtomCode provider".into(),
         ));
     }
-    // base_url is optional: native provider types (claude, deepseek, ollama, ...) fall back to
-    // AtomCode's built-in endpoints, and accounts imported from an existing config.toml may not
-    // carry one. When present it must be a valid http(s) URL.
+    // base_url is optional: native presets carry a default endpoint, and accounts imported
+    // from an existing config.toml may not carry one. When present it must be a valid http(s) URL.
     let base_url = account
         .get("base_url")
         .and_then(Value::as_str)
@@ -275,7 +311,10 @@ fn apply_provider(
                 .and_then(|model| model.get("account"))
                 .and_then(Value::as_str)
                 == Some(id)
-                && !config["models"].as_object().unwrap().contains_key(default_key)
+                && !config["models"]
+                    .as_object()
+                    .unwrap()
+                    .contains_key(default_key)
             {
                 return Err(AppError::InvalidInput(format!(
                     "Cannot delete or rename the default model '{}' while it is selected",
@@ -289,10 +328,22 @@ fn apply_provider(
         .unwrap()
         .retain(|_, model| model.get("account").and_then(Value::as_str) != Some(id));
     if let Some(config) = config {
-        // An empty base_url means "use the provider type's built-in endpoint"; writing
+        // An empty base_url means "use the provider's built-in endpoint"; writing
         // `base_url = ""` into config.toml would override that default with an invalid URL.
         let mut account = config["account"].clone();
         if let Some(map) = account.as_object_mut() {
+            // 写盘只留 AtomCode 认识的预设 id（claude → anthropic 等），
+            // 否则 AtomCode 会把未知 id 静默回退到 openai-compatible
+            if let Some(provider) = map
+                .get("provider")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            {
+                let canonical = canonical_provider_id(&provider);
+                if canonical != provider {
+                    map.insert("provider".into(), json!(canonical));
+                }
+            }
             if map.get("base_url").and_then(Value::as_str) == Some("") {
                 map.remove("base_url");
             }
@@ -606,23 +657,37 @@ context_window = 262144
     }
 
     #[test]
-    fn accepts_documented_types_and_native_defaults_without_base_url() {
-        // AtomCode docs list `claude` and `ollama` as provider types; native types may omit
-        // base_url (e.g. an account imported from an existing config.toml).
-        for (kind, model) in [("claude", "claude-sonnet-4-6"), ("ollama", "llama3.2")] {
+    fn accepts_preset_ids_and_normalizes_legacy_wire_names() {
+        // `account.provider` 是 AtomCode 预设 id（协议 + 厂商），原生预设可不写 base_url。
+        for (provider, model) in [
+            ("anthropic-compatible", "claude-sonnet-4-6"),
+            ("openai-responses", "gpt-6-sol"),
+            ("openrouter", "openai/gpt-6.1-sol"),
+            ("taotoken", "GLM-5.3-Flash"),
+            ("ollama", "llama3.2"),
+        ] {
             let config = json!({
-                "account": {"provider": kind},
+                "account": {"provider": provider},
                 "models": {"m": {"model": model}}
             });
             validate_provider("acct", &config)
-                .unwrap_or_else(|e| panic!("provider type {kind} should validate: {e}"));
+                .unwrap_or_else(|e| panic!("provider {provider} should validate: {e}"));
         }
-        // Legacy alias `anthropic` stays accepted so existing DB rows keep saving.
-        let legacy = json!({
-            "account": {"provider": "anthropic", "base_url": "https://api.anthropic.com"},
-            "models": {"m": {"model": "claude-sonnet-4-6"}}
+        // 早期 cc-switch 写过的 wire 名仍可保存（写盘时归一化）
+        for legacy in ["claude", "openai_responses", "gemini"] {
+            let config = json!({
+                "account": {"provider": legacy, "base_url": "https://api.anthropic.com"},
+                "models": {"m": {"model": "claude-sonnet-4-6"}}
+            });
+            validate_provider("acct", &config)
+                .unwrap_or_else(|e| panic!("legacy provider {legacy} should validate: {e}"));
+        }
+        // AtomCode 不认识的 id 直接拒绝：它会被静默回退成 openai-compatible
+        let unknown = json!({
+            "account": {"provider": "minimax_cn"},
+            "models": {"m": {"model": "MiniMax-M3.1-Flash"}}
         });
-        validate_provider("acct", &legacy).unwrap();
+        assert!(validate_provider("acct", &unknown).is_err());
         // A non-empty base_url must still be a valid http(s) URL.
         let bad = json!({
             "account": {"provider": "ollama", "base_url": "not a url"},
@@ -630,7 +695,8 @@ context_window = 262144
         });
         assert!(validate_provider("acct", &bad).is_err());
         // Saving an empty base_url must not write `base_url = ""` (it would override the
-        // provider type's built-in endpoint with an invalid URL).
+        // provider's built-in endpoint with an invalid URL), and a legacy provider name
+        // must be written back as the preset id AtomCode resolves.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         fs::write(&path, toml_text()).unwrap();
@@ -643,6 +709,17 @@ context_window = 262144
         assert!(document["provider_accounts"]["ollama"]
             .get("base_url")
             .is_none());
+
+        let legacy_config = json!({
+            "account": {"provider": "claude", "base_url": "https://api.anthropic.com"},
+            "models": {"sonnet": {"model": "claude-sonnet-4-6"}}
+        });
+        add_at_and_commit(&path, "legacy-claude", legacy_config, || Ok(())).unwrap();
+        let document = read(&path).unwrap();
+        assert_eq!(
+            document["provider_accounts"]["legacy-claude"]["provider"],
+            json!("anthropic")
+        );
     }
 
     #[test]
@@ -667,10 +744,16 @@ context_window = 262144
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("default model"));
         // But editing a non-default account is fine
-        add_at_and_commit(&path, "other", json!({
-            "account": {"provider": "deepseek", "base_url": "https://api.deepseek.com"},
-            "models": {"other-m": {"model": "deepseek-chat"}}
-        }), || Ok(())).unwrap();
+        add_at_and_commit(
+            &path,
+            "other",
+            json!({
+                "account": {"provider": "deepseek", "base_url": "https://api.deepseek.com"},
+                "models": {"other-m": {"model": "deepseek-chat"}}
+            }),
+            || Ok(()),
+        )
+        .unwrap();
         let edit_other = json!({
             "account": {"provider": "deepseek", "base_url": "https://api.deepseek.com"},
             "models": {"other-new": {"model": "deepseek-reasoner"}}  // renamed model

@@ -1,20 +1,40 @@
 import { describe, expect, it } from "vitest";
 import {
   ATOMCODE_PROVIDER_TYPES,
+  ATOMCODE_VENDOR_PROVIDER_LABELS,
   atomCodeCustomTemplate,
   atomcodeProviderPresets,
+  normalizeAtomCodeProvider,
 } from "./atomcodeProviderPresets";
 
 // 与后端 atomcode_config::validate_provider 同款约束
 const KEY_PATTERN = /^[a-zA-Z0-9._-]+$/;
+// AtomCode 预设 id（atomcode 仓库 provider_preset.rs 的 PRESETS 子集）
 const PROVIDER_TYPES = new Set([
+  // 通用协议
+  "openai-compatible",
+  "anthropic-compatible",
+  "openai-responses",
+  "deepseek-messages",
+  "ollama",
+  // 厂商预设
   "openai",
   "anthropic",
-  "claude",
   "deepseek",
-  "gemini",
-  "ollama",
-  "openai_responses",
+  "zhipu",
+  "zhipu-coding",
+  "aliyun",
+  "siliconflow",
+  "moonshot",
+  "minimax",
+  "minimax-token-plan",
+  "xiaomi-mimo",
+  "longcat",
+  "volcengine",
+  "volcengine-coding",
+  "openrouter",
+  "taotoken",
+  "opencode",
 ]);
 
 describe("atomcodeProviderPresets", () => {
@@ -47,7 +67,7 @@ describe("atomcodeProviderPresets", () => {
     expect(deepseek!.providerKey).toBe("deepseek");
     expect(deepseek!.settingsConfig.account.provider).toBe("deepseek");
     expect(deepseek!.settingsConfig.account.base_url).toBe(
-      "https://api.deepseek.com",
+      "https://api.deepseek.com/v1",
     );
     expect(Object.keys(deepseek!.settingsConfig.models)).toEqual([
       "deepseek-flash",
@@ -68,14 +88,12 @@ describe("atomcodeProviderPresets", () => {
     expect(openai!.icon).toBe("openai");
   });
 
-  it("declares exactly the provider types the backend accepts", () => {
+  it("declares exactly the protocol ids AtomCode's TUI offers", () => {
     expect(ATOMCODE_PROVIDER_TYPES.map((type) => type.value)).toEqual([
-      "openai",
-      "openai_responses",
-      "claude",
-      "anthropic",
-      "deepseek",
-      "gemini",
+      "openai-compatible",
+      "anthropic-compatible",
+      "openai-responses",
+      "deepseek-messages",
       "ollama",
     ]);
   });
@@ -96,11 +114,11 @@ describe("atomcodeProviderPresets", () => {
     });
   });
 
-  it("uses the documented Claude type and current Sonnet model", () => {
+  it("uses the anthropic preset id and current Sonnet model", () => {
     const anthropic = atomcodeProviderPresets.find(
       (p) => p.name === "Anthropic",
     );
-    expect(anthropic!.settingsConfig.account.provider).toBe("claude");
+    expect(anthropic!.settingsConfig.account.provider).toBe("anthropic");
     expect(anthropic!.settingsConfig.models["claude-sonnet-4-6"]).toMatchObject(
       { model: "claude-sonnet-4-6", context_window: 128000 },
     );
@@ -108,8 +126,80 @@ describe("atomcodeProviderPresets", () => {
 
   it("gives the custom template an empty account and no models", () => {
     const template = atomCodeCustomTemplate();
-    expect(template.account.provider).toBe("openai");
+    expect(template.account.provider).toBe("openai-compatible");
     expect(template.account.base_url).toBe("");
     expect(template.models).toEqual({});
+  });
+
+  it("normalizes legacy wire names to AtomCode preset ids", () => {
+    // claude 若不归一化会被 AtomCode 当成未知 id 回退 openai-compatible，直接不可用
+    expect(normalizeAtomCodeProvider("claude")).toBe("anthropic");
+    expect(normalizeAtomCodeProvider("openai_responses")).toBe(
+      "openai-responses",
+    );
+    expect(normalizeAtomCodeProvider("gemini")).toBe("openai-compatible");
+    // 已经是预设 id 的值原样保留
+    expect(normalizeAtomCodeProvider("openrouter")).toBe("openrouter");
+    expect(normalizeAtomCodeProvider("anthropic-compatible")).toBe(
+      "anthropic-compatible",
+    );
+  });
+
+  it("gives every vendor preset a label for the edit form", () => {
+    for (const preset of atomcodeProviderPresets) {
+      const provider = preset.settingsConfig.account.provider;
+      const isProtocol = ATOMCODE_PROVIDER_TYPES.some(
+        (type) => type.value === provider,
+      );
+      if (!isProtocol) {
+        expect(
+          ATOMCODE_VENDOR_PROVIDER_LABELS[provider],
+          preset.name,
+        ).toBeTruthy();
+      }
+    }
+  });
+
+  // AtomCode 源码 provider_preset.rs（main，registry 19 个厂商）里的 provider id 与
+  // base_url。deepseek 与 ollama 另有专项测试，不在此表。
+  it("mirrors AtomCode's preset registry ids and base URLs", () => {
+    const expected: Record<string, [string, string]> = {
+      anthropic: ["anthropic", "https://api.anthropic.com"],
+      openai: ["openai", "https://api.openai.com/v1"],
+      glm: ["zhipu", "https://open.bigmodel.cn/api/paas/v4"],
+      glm_coding_plan: [
+        "zhipu-coding",
+        "https://open.bigmodel.cn/api/coding/paas/v4",
+      ],
+      moonshot: ["moonshot", "https://api.moonshot.cn/v1"],
+      qwen: ["aliyun", "https://dashscope.aliyuncs.com/compatible-mode/v1"],
+      minimax: ["minimax", "https://api.minimaxi.com/v1"],
+      minimax_token_plan: ["minimax-token-plan", "https://api.minimax.cn/v1"],
+      xiaomi_mimo: ["xiaomi-mimo", "https://api.xiaomimimo.com/v1"],
+      longcat: ["longcat", "https://api.longcat.chat/openai/v1"],
+      volcengine_ark: [
+        "volcengine",
+        "https://ark.cn-beijing.volces.com/api/v3",
+      ],
+      volcengine_ark_coding_plan: [
+        "volcengine-coding",
+        "https://ark.cn-beijing.volces.com/api/coding/v3",
+      ],
+      siliconflow: ["siliconflow", "https://api.siliconflow.cn/v1"],
+      openrouter: ["openrouter", "https://openrouter.ai/api/v1"],
+      taotoken: ["taotoken", "https://taotoken.net/api/v1"],
+      opencode_zen: ["opencode", "https://opencode.ai/zen/v1"],
+    };
+    for (const [key, [provider, baseUrl]] of Object.entries(expected)) {
+      const preset = atomcodeProviderPresets.find((p) => p.providerKey === key);
+      expect(preset, key).toBeDefined();
+      expect(preset!.settingsConfig.account.provider, key).toBe(provider);
+      expect(preset!.settingsConfig.account.base_url, key).toBe(baseUrl);
+    }
+  });
+
+  it("keeps provider keys unique", () => {
+    const keys = atomcodeProviderPresets.map((p) => p.providerKey);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });
