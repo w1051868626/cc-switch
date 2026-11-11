@@ -74,13 +74,25 @@ pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
 
 /// 获取 AtomCode 当前的 default_provider（如果有的话）。
 /// 返回空字符串表示未设置或配置文件不存在。
+///
+/// 注意：config.toml 中的 default_provider 是模型键，需要通过
+/// models[模型键].account 找到对应的账号 ID。
 pub(crate) fn current_provider() -> Result<String, AppError> {
     let document = read(&config_path())?;
-    Ok(document
-        .get("default_provider")
+    let default_model_key = match document.get("default_provider").and_then(Value::as_str) {
+        Some(key) if !key.is_empty() => key,
+        _ => return Ok(String::new()),
+    };
+
+    // 通过模型键找到对应的账号 ID
+    let account_id = document
+        .get("models")
+        .and_then(|models| models.get(default_model_key))
+        .and_then(|model| model.get("account"))
         .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string())
+        .unwrap_or_default();
+
+    Ok(account_id.to_string())
 }
 
 pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError> {
@@ -570,6 +582,27 @@ context_window = 262144
         assert!(save_at_and_commit(&path, "x", Some(bad), false, || Ok(())).is_err());
         let document = read(&path).unwrap();
         assert!(document["provider_accounts"].get("x").is_none());
+    }
+
+    #[test]
+    fn current_provider_returns_account_id_from_default_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, toml_text()).unwrap();
+
+        // Mock the config path to use our test directory
+        std::env::set_var("ATOMCODE_HOME", dir.path());
+
+        // toml_text() has:
+        // default_provider = "acct-key-a"
+        // [models."acct-key-a"]
+        // account = "acct"
+        // So current_provider() should return "acct", not "acct-key-a"
+        let current = current_provider().unwrap();
+        assert_eq!(current, "acct", "Should return account ID, not model key");
+
+        // Clean up
+        std::env::remove_var("ATOMCODE_HOME");
     }
 
     #[test]
