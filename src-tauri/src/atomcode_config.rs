@@ -72,6 +72,17 @@ pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
         .collect())
 }
 
+/// 获取 AtomCode 当前的 default_provider（如果有的话）。
+/// 返回空字符串表示未设置或配置文件不存在。
+pub(crate) fn current_provider() -> Result<String, AppError> {
+    let document = read(&config_path())?;
+    Ok(document
+        .get("default_provider")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string())
+}
+
 pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError> {
     if id.trim().is_empty() || id.chars().any(char::is_control) {
         return Err(AppError::InvalidInput(

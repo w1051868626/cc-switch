@@ -5744,6 +5744,9 @@ impl ProviderService {
         if app_type == AppType::Kimi {
             return crate::kimi_config::current_provider();
         }
+        if app_type == AppType::AtomCode {
+            return crate::atomcode_config::current_provider();
+        }
         // Additive mode apps have no "current" provider concept
         if app_type.is_additive_mode() {
             return Ok(String::new());
