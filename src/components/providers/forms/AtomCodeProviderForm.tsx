@@ -160,6 +160,7 @@ export function AtomCodeProviderForm({
     syncRowIds(next.models);
     setJsonText(text ?? JSON.stringify(next, null, 2));
     setJsonValid(true);
+    setKeyConflict(false); // Clear conflict warning when config changes
   };
   const updateAccount = (next: Partial<AtomCodeConfig["account"]>) =>
     update({

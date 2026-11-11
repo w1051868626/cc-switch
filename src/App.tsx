@@ -1321,6 +1321,17 @@ function App() {
           ]),
         );
       }
+      if (activeApp === "atomcode") {
+        // AtomCode model keys are globally unique (no account prefix in key itself).
+        // Rewrite with new prefix using . separator (allowed by KEY_PATTERN).
+        const models = duplicatedProvider.settingsConfig.models ?? {};
+        duplicatedProvider.settingsConfig.models = Object.fromEntries(
+          Object.entries(models).map(([key, value]) => [
+            `${duplicatedProvider.providerKey}.${key.startsWith(`${provider.id}.`) ? key.slice(provider.id.length + 1) : key}`,
+            value,
+          ]),
+        );
+      }
       if (activeApp === "kimi" || activeApp === "atomcode") {
         // 共存式应用的副本只进库，不自动写进 live 配置
         duplicatedProvider.addToLive = false;
