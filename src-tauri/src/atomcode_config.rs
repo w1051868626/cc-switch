@@ -243,6 +243,23 @@ fn apply_provider(
                 )));
             }
         }
+        // Editing the current account must not delete or rename the default model.
+        if let Some(default_key) = document.get("default_model").and_then(Value::as_str) {
+            if document["models"]
+                .as_object()
+                .unwrap()
+                .get(default_key)
+                .and_then(|model| model.get("account"))
+                .and_then(Value::as_str)
+                == Some(id)
+                && !config["models"].as_object().unwrap().contains_key(default_key)
+            {
+                return Err(AppError::InvalidInput(format!(
+                    "Cannot delete or rename the default model '{}' while it is selected",
+                    default_key
+                )));
+            }
+        }
     }
     document["models"]
         .as_object_mut()
@@ -582,5 +599,38 @@ context_window = 262144
         assert!(document["provider_accounts"]["ollama"]
             .get("base_url")
             .is_none());
+    }
+
+    #[test]
+    fn cannot_delete_or_rename_default_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, toml_text()).unwrap();
+        // Editing the current account (acct) and trying to delete its default model (acct-key-a)
+        let config = json!({
+            "account": {"provider": "openai", "base_url": "https://api.example.com/v1", "api_key": "sk-test"},
+            "models": {"acct-key-b": {"model": "key-b"}}  // acct-key-a is gone
+        });
+        let result = save_at_and_commit(&path, "acct", Some(config.clone()), false, || Ok(()));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("default model"));
+        // Renaming also fails
+        let renamed = json!({
+            "account": {"provider": "openai", "base_url": "https://api.example.com/v1", "api_key": "sk-test"},
+            "models": {"acct-key-renamed": {"model": "key-a"}}
+        });
+        let result = save_at_and_commit(&path, "acct", Some(renamed), false, || Ok(()));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("default model"));
+        // But editing a non-default account is fine
+        add_at_and_commit(&path, "other", json!({
+            "account": {"provider": "deepseek", "base_url": "https://api.deepseek.com"},
+            "models": {"other-m": {"model": "deepseek-chat"}}
+        }), || Ok(())).unwrap();
+        let edit_other = json!({
+            "account": {"provider": "deepseek", "base_url": "https://api.deepseek.com"},
+            "models": {"other-new": {"model": "deepseek-reasoner"}}  // renamed model
+        });
+        save_at_and_commit(&path, "other", Some(edit_other), false, || Ok(())).unwrap();
     }
 }

@@ -202,8 +202,16 @@ export function ProviderList({
             ? (piCurrentState?.enabledProviderIds.includes(provider.id) ??
                 false)
             : false;
-        default:
+        case "claude":
+        case "claude-desktop":
+        case "codex":
+        case "gemini":
+        case "grokbuild":
+        case "copilot":
+        case "agy":
           return true;
+        default:
+          return false;
       }
     },
     [
